@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+
+    stages {
+        stage("Clone") {
+            steps {
+                git url: 'https://github.com/apiwizlabs/wizdesk.git', branch: 'main'
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                sh 'cd wizdesk && npm install'
+                sh 'cd wizdesk && npm run build'
+                sh 'cd wizdesk && docker build . -t apiwiz-frontend'
+            }
+        }
+
+        stage('Build Backend') {
+            steps {
+                sh 'cd wizdesk/Server && npm install'
+                sh 'cd wizdesk/Server && docker build . -t apiwiz-backend'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                // Run the tests for the frontend
+                sh 'cd wizdesk && npm test'
+
+                // Run the tests for the backend
+                sh 'cd wizdesk/Server && npm test'
+            }
+        }
+
+        stage("Push to Repository") {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "DockerHub", passwordVariable: "DockerHubPass", usernameVariable: "DockerHubUser")]) {
+                    sh "docker login -u ${env.DockerHubUser} -p ${env.DockerHubPass}"
+                    sh "docker tag apiwiz-frontend ${env.DockerHubUser}/apiwiz-frontend:${env.BUILD_NUMBER}"
+                    sh "docker push ${env.DockerHubUser}/apiwiz-frontend:${env.BUILD_NUMBER}"
+                    sh "docker tag apiwiz-backend ${env.DockerHubUser}/apiwiz-backend:${env.BUILD_NUMBER}"
+                    sh "docker push ${env.DockerHubUser}/apiwiz-backend:${env.BUILD_NUMBER}"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                // Deploy the MongoDB database and application to the Kubernetes cluster
+                script {
+                    // Load the Kubernetes credentials
+                    withCredentials([kubernetes(credentialsId: 'KubeconfigCredentials', variable: 'KUBECONFIG')]) {
+                        // Deploy the MongoDB database and application using kubectl
+                        sh "kubectl apply -f Kubernetes/deployment.yml"
+                    }
+                }
+            }
+        }
+    }
+}
